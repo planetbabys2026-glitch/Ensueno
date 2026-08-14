@@ -25,6 +25,15 @@ const formatPrice = (price: number) =>
  */
 const CATEGORIES = ['sueno', 'piel', 'higiene', 'kits'] as const;
 
+/**
+ * Red de seguridad del catálogo. Esta página no toca ninguna API dinámica, así
+ * que Next la prerrenderizaba en el build y la servía congelada: lo editado en
+ * el panel no llegaba nunca. Cada escritura de catálogo, promociones o portada
+ * ya la invalida al instante (`revalidateStorefront`); esto solo garantiza que,
+ * si esa invalidación se pierde, la portada se ponga al día sola en 5 minutos.
+ */
+export const revalidate = 300;
+
 function toProduct(row: unknown): Product {
   const p = row as Product;
   const category = (CATEGORIES as readonly string[]).includes(p.category)

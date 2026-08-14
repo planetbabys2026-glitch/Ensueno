@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireAdmin, noAutorizado } from '@/lib/adminAuth';
+import { requireModulo, noAutorizado, sinPermiso } from '@/lib/adminAuth';
+import { ESTADOS_PEDIDO, puedeAsignarEstado } from '@/lib/permisos';
 import { resendService } from '@/infrastructure/services/ResendService';
 
 export async function GET(req: Request) {
   try {
-    const admin = await requireAdmin();
-    if (!admin) {
+    const sesion = await requireModulo('orders');
+    if (!sesion) {
       return noAutorizado();
     }
 
@@ -82,8 +83,8 @@ export async function GET(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const admin = await requireAdmin();
-    if (!admin) {
+    const sesion = await requireModulo('orders');
+    if (!sesion) {
       return noAutorizado();
     }
 
@@ -94,19 +95,19 @@ export async function PUT(req: Request) {
       return NextResponse.json({ success: false, error: 'Falta orderId o status' }, { status: 400 });
     }
 
-    const allowedStatuses = [
-      'orden_generada',
-      'confirmado',
-      'empacada',
-      'en_camino',
-      'sin_poder_entregarse',
-      'entregada',
-      'devolucion',
-      'anulada',
-    ];
+    if (!(ESTADOS_PEDIDO as readonly string[]).includes(status)) {
+      return NextResponse.json(
+        { success: false, error: `Estado no válido. Debe ser uno de: ${ESTADOS_PEDIDO.join(', ')}` },
+        { status: 400 }
+      );
+    }
 
-    if (!allowedStatuses.includes(status)) {
-      return NextResponse.json({ success: false, error: `Estado no válido. Debe ser uno de: ${allowedStatuses.join(', ')}` }, { status: 400 });
+    /* Anular saca el pedido de los ingresos y no tiene vuelta para la clienta:
+       es decisión de administración. La UI ya le esconde la opción a la
+       asistente, pero esconder un <option> no es una defensa — cualquiera
+       manda el PUT a mano. La barrera de verdad está aquí. */
+    if (!puedeAsignarEstado(sesion.role, status)) {
+      return sinPermiso('Anular un pedido es una acción reservada a administración.');
     }
 
     // Map status to step index for progress tracker

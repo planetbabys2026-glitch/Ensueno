@@ -8,6 +8,14 @@ import { formatSizePrices } from '@/lib/pricing';
 import { Tip } from '@/types';
 import ImageUploader from '@/components/admin/ImageUploader';
 import {
+  ES_ROL_DE_PANEL,
+  MODULOS_POR_ROL,
+  NOMBRE_ROL,
+  puedeAsignarEstado,
+  type ModuloPanel,
+  type RolPanel,
+} from '@/lib/permisos';
+import {
   Users,
   ShoppingBag,
   TrendingUp,
@@ -102,7 +110,7 @@ const MODULES = {
 type ModuleKey = keyof typeof MODULES;
 
 export default function AdminDashboardPage() {
-  const { showToast } = useToast();
+  const { showToast, showConfirm } = useToast();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -118,6 +126,12 @@ export default function AdminDashboardPage() {
   const [recoveryBusy, setRecoveryBusy] = useState(false);
 
   const [activeTab, setActiveTab] = useState<ModuleKey>('orders');
+  /* Rol de quien está usando el panel. Manda en qué módulos se pintan y en si
+     puede anular un pedido. Es comodidad de interfaz, no seguridad: la barrera
+     de verdad está en el proxy y en cada ruta. */
+  const [rol, setRol] = useState<RolPanel>('ADMIN');
+  const modulosVisibles = MODULOS_POR_ROL[rol];
+  const esAdmin = rol === 'ADMIN';
 
   // ---------------- Módulo de Métricas ----------------
   const [metrics, setMetrics] = useState<any>(null);
@@ -178,7 +192,11 @@ export default function AdminDashboardPage() {
   const [invitesList, setInvitesList] = useState<any[]>([]);
   const [currentAdminId, setCurrentAdminId] = useState<string | null>(null);
   const [loadingTeam, setLoadingTeam] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ fullName: '', email: '' });
+  const [inviteForm, setInviteForm] = useState<{ fullName: string; email: string; role: RolPanel }>({
+    fullName: '',
+    email: '',
+    role: 'ADMIN',
+  });
   const [sendingInvite, setSendingInvite] = useState(false);
   const [busyTeamId, setBusyTeamId] = useState<string | null>(null);
   /* Sin RESEND_API_KEY el correo solo se simula. Se muestra el enlace para que
@@ -206,13 +224,16 @@ export default function AdminDashboardPage() {
   }>({});
 
   const [products, setProducts] = useState<any[]>([]);
+  // Retirados de la tienda. Se guardan aparte para que el catálogo normal no
+  // tenga que filtrarlos en cada render y para poder restaurarlos.
+  const [archivedProducts, setArchivedProducts] = useState<any[]>([]);
   const [editingImageId, setEditingImageId] = useState<string | null>(null);
   const [newImageUrl, setNewImageUrl] = useState('');
 
   // Full Product Management Modal & Form State
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
-  const [productFilter, setProductFilter] = useState<'all' | 'featured' | 'promo'>('all');
+  const [productFilter, setProductFilter] = useState<'all' | 'featured' | 'promo' | 'archived'>('all');
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [productForm, setProductForm] = useState({
@@ -346,12 +367,20 @@ export default function AdminDashboardPage() {
     }
   };
 
+  /**
+   * Comprueba la sesión contra /auth/me y no contra un módulo del panel.
+   *
+   * Antes preguntaba por los datos de remarketing, que son de administración:
+   * a una asistente con sesión válida le habría respondido 401 y el panel la
+   * habría echado al login. Quién es y qué puede ver son dos preguntas
+   * distintas, y solo la primera decide si entra.
+   */
   const checkAdminAuth = async () => {
     try {
-      const res = await apiService.getAdminRemarketingData();
-      if (res.success) {
+      const res = await apiService.getCurrentUser();
+      if (res.success && ES_ROL_DE_PANEL(res.user?.role)) {
         setIsAuthenticated(true);
-        setData(res.data);
+        aplicarRol(res.user.role);
       } else {
         setIsAuthenticated(false);
       }
@@ -362,10 +391,34 @@ export default function AdminDashboardPage() {
     }
   };
 
+  /**
+   * Deja el panel en el estado que corresponde al rol: la pestaña abierta pasa
+   * a ser una permitida, y los datos que solo ve administración se cargan solo
+   * si hay a quién mostrárselos.
+   */
+  const aplicarRol = (nuevoRol: RolPanel) => {
+    setRol(nuevoRol);
+    const permitidos = MODULOS_POR_ROL[nuevoRol] as readonly string[];
+    setActiveTab((actual) => (permitidos.includes(actual) ? actual : (permitidos[0] as ModuleKey)));
+
+    if (nuevoRol === 'ADMIN') {
+      apiService
+        .getAdminRemarketingData()
+        .then((r) => r.success && setData(r.data))
+        .catch(() => {});
+    } else {
+      setData({});
+    }
+  };
+
   const loadProductsAndShipping = async () => {
     try {
-      const prods = await apiService.getProducts();
+      const [prods, archivados] = await Promise.all([
+        apiService.getProducts(),
+        apiService.getArchivedProducts(),
+      ]);
       setProducts(prods);
+      setArchivedProducts(archivados);
 
       const configRes = await fetch('/api/v1/shipping/config');
       const configJson = await configRes.json();
@@ -429,15 +482,14 @@ export default function AdminDashboardPage() {
     setLoginError(null);
     try {
       const res = await apiService.login(loginEmail, loginPassword);
-      if (res.success && res.user?.role === 'ADMIN') {
+      if (res.success && ES_ROL_DE_PANEL(res.user?.role)) {
         setIsAuthenticated(true);
-        showToast('¡Bienvenido al Panel Administrador Ensueño!', 'success');
+        aplicarRol(res.user.role);
+        showToast(`¡Bienvenida al panel, ${NOMBRE_ROL[res.user.role as RolPanel]}!`, 'success');
         loadProductsAndShipping();
-        const remarketingRes = await apiService.getAdminRemarketingData();
-        if (remarketingRes.success) setData(remarketingRes.data);
-      } else if (res.success && res.user?.role !== 'ADMIN') {
-        setLoginError('Tu usuario no tiene permisos de Administrador.');
-        showToast('Acceso Denegado: No eres Administrador', 'error');
+      } else if (res.success) {
+        setLoginError('Tu usuario no tiene acceso al panel.');
+        showToast('Acceso denegado: tu cuenta no tiene permisos del panel', 'error');
       } else {
         setLoginError(res.error || 'Credenciales incorrectas');
         showToast(res.error || 'Credenciales incorrectas', 'error');
@@ -506,14 +558,13 @@ export default function AdminDashboardPage() {
 
       // Con la clave nueva ya se puede entrar: se evita pedirla otra vez.
       const login = await apiService.login(recoveryEmail.trim(), recoveryPassword);
-      if (login.success && login.user?.role === 'ADMIN') {
+      if (login.success && ES_ROL_DE_PANEL(login.user?.role)) {
         setIsAuthenticated(true);
+        aplicarRol(login.user.role);
         showToast('¡Contraseña actualizada! Bienvenida de vuelta', 'success');
         loadProductsAndShipping();
-        const remarketingRes = await apiService.getAdminRemarketingData();
-        if (remarketingRes.success) setData(remarketingRes.data);
       } else if (login.success) {
-        setLoginError('Tu contraseña se actualizó, pero esta cuenta no tiene permisos de Administrador.');
+        setLoginError('Tu contraseña se actualizó, pero esta cuenta no tiene acceso al panel.');
         goToLoginView('login');
       } else {
         showToast('Contraseña actualizada. Ingresa con tu clave nueva.', 'success');
@@ -886,18 +937,48 @@ export default function AdminDashboardPage() {
   };
 
   const handleDeleteProduct = async (productId: string, productName: string) => {
-    if (!confirm(`¿Estás seguro de eliminar el producto "${productName}" del catálogo?`)) return;
+    const confirmado = await showConfirm({
+      title: `¿Retirar "${productName}" de la tienda?`,
+      message:
+        'Deja de aparecer en la página principal y en el catálogo, y su ficha queda inaccesible. Los pedidos que ya lo incluyen no cambian, y puedes devolverlo desde el filtro "Retirados".',
+      confirmLabel: 'Retirar de la tienda',
+      cancelLabel: 'Conservar',
+      tone: 'danger',
+    });
+    if (!confirmado) return;
 
     try {
       const res = await apiService.deleteProduct(productId);
       if (res.success) {
-        showToast(`Producto "${productName}" eliminado del sistema`, 'info');
+        showToast(`"${productName}" ya no aparece en la tienda`, 'info');
         loadProductsAndShipping();
       } else {
-        showToast(res.error || 'Error al eliminar producto', 'error');
+        showToast(res.error || 'No se pudo retirar el producto', 'error');
       }
     } catch (err) {
-      showToast('Error en el servidor al eliminar producto', 'error');
+      showToast('Error en el servidor al retirar el producto', 'error');
+    }
+  };
+
+  const handleRestoreProduct = async (productId: string, productName: string) => {
+    const confirmado = await showConfirm({
+      title: `¿Devolver "${productName}" a la tienda?`,
+      message:
+        'Vuelve al catálogo con los mismos datos que tenía. Si además quieres verlo en la página principal, márcalo después como destacado.',
+      confirmLabel: 'Devolver a la tienda',
+    });
+    if (!confirmado) return;
+
+    try {
+      const res = await apiService.restoreProduct(productId);
+      if (res.success) {
+        showToast(`"${productName}" volvió al catálogo`, 'success');
+        loadProductsAndShipping();
+      } else {
+        showToast(res.error || 'No se pudo restaurar el producto', 'error');
+      }
+    } catch (err) {
+      showToast('Error en el servidor al restaurar el producto', 'error');
     }
   };
 
@@ -1019,7 +1100,15 @@ export default function AdminDashboardPage() {
   };
 
   const handleDeletePromo = async (promoId: string, promoTitle: string) => {
-    if (!confirm(`¿Estás seguro de eliminar la promoción "${promoTitle}"?`)) return;
+    const confirmado = await showConfirm({
+      title: `¿Eliminar la promoción "${promoTitle}"?`,
+      message:
+        'Desaparece de la sección de ofertas de la página principal. Esto no se puede deshacer: si solo quieres pausarla, usa el botón "Activa en inicio" de la tarjeta.',
+      confirmLabel: 'Eliminar promoción',
+      cancelLabel: 'Conservar',
+      tone: 'danger',
+    });
+    if (!confirmado) return;
 
     try {
       const res = await apiService.deletePromotion(promoId);
@@ -1046,6 +1135,22 @@ export default function AdminDashboardPage() {
       showToast('Error enviando recordatorio', 'error');
     }
   };
+
+  /* Catálogo que se pinta en el módulo de productos. "Retirados" cambia la
+     lista de origen, no el criterio: los archivados llegan en su propia
+     consulta y nunca se mezclan con el catálogo activo. */
+  const productosVisibles = (productFilter === 'archived' ? archivedProducts : products)
+    .filter((p) => {
+      if (productFilter === 'featured') return p.isFeatured !== false;
+      if (productFilter === 'promo') return p.originalPrice && p.originalPrice > p.price;
+      return true;
+    })
+    .filter(
+      (p) =>
+        !productSearchQuery ||
+        p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
+        p.subtitle?.toLowerCase().includes(productSearchQuery.toLowerCase())
+    );
 
   // Unique departments from loaded rates for the filter dropdown
   const uniqueDepartments = Array.from(new Set(shippingRates.map((r) => r.department).filter(Boolean))).sort();
@@ -1485,10 +1590,10 @@ export default function AdminDashboardPage() {
     setSendingInvite(true);
     setLastInviteLink(null);
     try {
-      const res = await apiService.inviteAdminUser(fullName, email);
+      const res = await apiService.inviteAdminUser(fullName, email, inviteForm.role);
       if (res.success) {
         showToast(res.message || 'Invitación enviada', 'success');
-        setInviteForm({ fullName: '', email: '' });
+        setInviteForm({ fullName: '', email: '', role: 'ADMIN' });
         if (res.data?.activationUrl) setLastInviteLink(res.data.activationUrl);
         await fetchTeam();
       } else {
@@ -1926,7 +2031,7 @@ export default function AdminDashboardPage() {
 
             {/* El menú se genera desde MODULES: antes eran siete bloques
                 duplicados que se desincronizaban entre sí. */}
-            {(Object.keys(MODULES) as ModuleKey[]).map((key) => {
+            {(modulosVisibles as readonly ModuleKey[]).map((key) => {
               const mod = MODULES[key];
               const isActive = activeTab === key;
               const count =
@@ -2326,7 +2431,17 @@ export default function AdminDashboardPage() {
                                     <option value="sin_poder_entregarse">5. Sin Poder Entregarse</option>
                                     <option value="entregada">6. Entregada</option>
                                     <option value="devolucion">7. Devolución</option>
-                                    <option value="anulada">8. Anulada</option>
+                                    {/* Anular saca el pedido de los ingresos y no
+                                        tiene vuelta: solo administración. Si el
+                                        pedido YA está anulado se deja la opción,
+                                        porque si no el <select> mostraría un valor
+                                        que no está en su lista y quedaría en
+                                        blanco. La barrera real está en el PUT. */}
+                                    {(puedeAsignarEstado(rol, 'anulada') || ord.status === 'anulada') && (
+                                      <option value="anulada" disabled={!puedeAsignarEstado(rol, 'anulada')}>
+                                        8. Anulada
+                                      </option>
+                                    )}
                                   </select>
                                 </td>
                               </tr>
@@ -3167,6 +3282,21 @@ export default function AdminDashboardPage() {
                     >
                       En Oferta
                     </button>
+
+                    {/* Los retirados no se borran de la base: viven aquí hasta
+                        que alguien los devuelva a la tienda. */}
+                    {(archivedProducts.length > 0 || productFilter === 'archived') && (
+                      <button
+                        onClick={() => setProductFilter('archived')}
+                        className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1 ${
+                          productFilter === 'archived'
+                            ? 'bg-tinta text-white shadow-sm'
+                            : 'bg-cian text-tinta-suave hover:bg-cian'
+                        }`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Retirados ({archivedProducts.length})
+                      </button>
+                    )}
                   </div>
 
                   <div className="relative w-full sm:w-64">
@@ -3182,32 +3312,53 @@ export default function AdminDashboardPage() {
                 </div>
 
                 {/* Products Grid */}
+                {productosVisibles.length === 0 ? (
+                  <div className={`${UI.card} text-center py-12`}>
+                    <p className="text-sm font-bold text-tinta">
+                      {productFilter === 'archived'
+                        ? 'No hay productos retirados.'
+                        : 'Ningún producto coincide con este filtro.'}
+                    </p>
+                    <p className="text-xs font-semibold text-tinta-suave mt-1">
+                      {productFilter === 'archived'
+                        ? 'Lo que retires de la tienda aparecerá aquí para poder devolverlo.'
+                        : 'Prueba con otra búsqueda o vuelve a "Todos".'}
+                    </p>
+                    {productFilter !== 'all' && (
+                      <button
+                        onClick={() => setProductFilter('all')}
+                        className={`${UI.btnGhost} mt-4`}
+                      >
+                        Ver todo el catálogo
+                      </button>
+                    )}
+                  </div>
+                ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {products
-                    .filter((p) => {
-                      if (productFilter === 'featured') return p.isFeatured !== false;
-                      if (productFilter === 'promo') return p.originalPrice && p.originalPrice > p.price;
-                      return true;
-                    })
-                    .filter((p) =>
-                      !productSearchQuery ||
-                      p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-                      p.subtitle?.toLowerCase().includes(productSearchQuery.toLowerCase())
-                    )
+                  {productosVisibles
                     .map((product) => {
                       const hasPromo = product.originalPrice && product.originalPrice > product.price;
                       const isFeatured = product.isFeatured !== false;
+                      const estaRetirado = Boolean(product.archivedAt);
 
                       return (
                         <div
                           key={product.id}
                           className={`border rounded-3xl p-5 bg-white space-y-4 shadow-sm hover:shadow-md transition-all flex flex-col justify-between relative ${
-                            isFeatured ? 'border-borde ring-2 ring-celeste' : 'border-borde'
+                            estaRetirado
+                              ? 'border-borde opacity-90'
+                              : isFeatured
+                              ? 'border-borde ring-2 ring-celeste'
+                              : 'border-borde'
                           }`}
                         >
                           {/* Featured Badge */}
                           <div className="flex items-center justify-between gap-2">
-                            {isFeatured ? (
+                            {estaRetirado ? (
+                              <span className="bg-tinta text-white text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                                <Trash2 className="w-3 h-3" /> Retirado de la tienda
+                              </span>
+                            ) : isFeatured ? (
                               <span className="bg-amarillo text-tinta border border-borde text-[10px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
                                 <Star className="w-3 h-3 fill-amarillo text-tertiary" /> 2da Sección Inicio
                               </span>
@@ -3226,7 +3377,11 @@ export default function AdminDashboardPage() {
 
                           {/* Image Preview */}
                           <div className="relative w-full h-44 rounded-2xl overflow-hidden bg-cian border border-borde">
-                            <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
+                            <img
+                              src={product.image}
+                              alt={product.name}
+                              className={`w-full h-full object-cover ${estaRetirado ? 'grayscale' : ''}`}
+                            />
                             {product.badge && (
                               <span className="absolute top-2.5 left-2.5 bg-azul text-white text-[10px] font-black px-2.5 py-0.5 rounded-full shadow-sm">
                                 {product.badge}
@@ -3268,39 +3423,54 @@ export default function AdminDashboardPage() {
 
                           {/* Quick Action Buttons */}
                           <div className="pt-3 border-t border-borde space-y-2">
-                            <div className="grid grid-cols-2 gap-2">
+                            {estaRetirado ? (
+                              /* Un producto fuera de la tienda solo admite una
+                                 decisión: devolverlo. Destacarlo o editarlo sin
+                                 que nadie pueda verlo no lleva a ningún lado. */
                               <button
-                                onClick={() => handleOpenEditProduct(product)}
-                                className="w-full bg-cian hover:bg-cian text-azul text-xs font-bold py-2 rounded-xl border border-borde transition-colors flex items-center justify-center gap-1"
+                                onClick={() => handleRestoreProduct(product.id, product.name)}
+                                className="w-full bg-azul hover:bg-azul-hondo text-white text-xs font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-1.5"
                               >
-                                <Pencil className="w-3.5 h-3.5" /> Editar Todo
+                                <RefreshCw className="w-3.5 h-3.5" /> Devolver a la tienda
                               </button>
+                            ) : (
+                              <>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    onClick={() => handleOpenEditProduct(product)}
+                                    className="w-full bg-cian hover:bg-cian text-azul text-xs font-bold py-2 rounded-xl border border-borde transition-colors flex items-center justify-center gap-1"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" /> Editar Todo
+                                  </button>
 
-                              <button
-                                onClick={() => handleToggleFeaturedProduct(product)}
-                                className={`w-full text-xs font-bold py-2 rounded-xl border transition-colors flex items-center justify-center gap-1 ${
-                                  isFeatured
-                                    ? 'bg-amarillo hover:bg-amarillo text-tinta border-borde'
-                                    : 'bg-cian hover:bg-cian text-tinta-suave border-borde'
-                                }`}
-                                title="Alternar presencia en 2da sección de la página principal"
-                              >
-                                <Star className={`w-3.5 h-3.5 ${isFeatured ? 'fill-amarillo text-tertiary' : ''}`} />
-                                {isFeatured ? 'En Inicio' : '+ A Inicio'}
-                              </button>
-                            </div>
+                                  <button
+                                    onClick={() => handleToggleFeaturedProduct(product)}
+                                    className={`w-full text-xs font-bold py-2 rounded-xl border transition-colors flex items-center justify-center gap-1 ${
+                                      isFeatured
+                                        ? 'bg-amarillo hover:bg-amarillo text-tinta border-borde'
+                                        : 'bg-cian hover:bg-cian text-tinta-suave border-borde'
+                                    }`}
+                                    title="Alternar presencia en 2da sección de la página principal"
+                                  >
+                                    <Star className={`w-3.5 h-3.5 ${isFeatured ? 'fill-amarillo text-tertiary' : ''}`} />
+                                    {isFeatured ? 'En Inicio' : '+ A Inicio'}
+                                  </button>
+                                </div>
 
-                            <button
-                              onClick={() => handleDeleteProduct(product.id, product.name)}
-                              className="w-full text-secondary hover:text-secondary hover:bg-cian text-[11px] font-bold py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" /> Eliminar Producto
-                            </button>
+                                <button
+                                  onClick={() => handleDeleteProduct(product.id, product.name)}
+                                  className="w-full text-secondary hover:text-secondary hover:bg-cian text-[11px] font-bold py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Retirar de la tienda
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                       );
                     })}
                 </div>
+                )}
               </div>
             )}
 
@@ -4263,6 +4433,40 @@ export default function AdminDashboardPage() {
               </div>
 
               <form onSubmit={handleSendInvite} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-3">
+                <div className="sm:col-span-3">
+                  <span className="ens-eyebrow text-tinta-suave block mb-1.5">Con qué acceso entra</span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {(['ADMIN', 'ASISTENTE'] as const).map((r) => {
+                      const elegido = inviteForm.role === r;
+                      return (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => setInviteForm({ ...inviteForm, role: r })}
+                          aria-pressed={elegido}
+                          className={`text-left p-3.5 rounded-xl border transition-colors ens-focus ${
+                            elegido ? 'bg-cian border-azul' : 'bg-white border-borde hover:bg-cian'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 font-bold text-sm text-tinta">
+                            {r === 'ADMIN' ? (
+                              <ShieldCheck className="w-4 h-4 text-azul" />
+                            ) : (
+                              <UserCheck className="w-4 h-4 text-azul" />
+                            )}
+                            {NOMBRE_ROL[r]}
+                          </span>
+                          <span className="block text-xs text-tinta-suave mt-1">
+                            {r === 'ADMIN'
+                              ? 'El panel completo, incluido el catálogo, los envíos y este mismo módulo.'
+                              : 'Solo pedidos, seguimiento y tips. No puede anular pedidos ni invitar a nadie.'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div>
                   <label htmlFor="invite-name" className="ens-eyebrow text-tinta-suave block mb-1.5">
                     Nombre completo
@@ -4355,8 +4559,15 @@ export default function AdminDashboardPage() {
                           return (
                             <tr key={adm.id} className="hover:bg-cian transition-colors">
                               <td className="py-4 px-4 font-bold text-tinta">
-                                <span className="inline-flex items-center gap-2">
+                                <span className="inline-flex items-center gap-2 flex-wrap">
                                   {adm.fullName}
+                                  <span
+                                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full border border-borde ${
+                                      adm.role === 'ADMIN' ? 'bg-amarillo text-tinta' : 'bg-cian text-azul'
+                                    }`}
+                                  >
+                                    {NOMBRE_ROL[adm.role as RolPanel] || adm.role}
+                                  </span>
                                   {esYo && (
                                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-celeste text-azul border border-borde">
                                       Tú
@@ -4430,6 +4641,13 @@ export default function AdminDashboardPage() {
                           <td className="py-4 px-4">
                             <p className="font-bold text-tinta">{inv.fullName}</p>
                             <p className="text-tinta-suave">{inv.email}</p>
+                            <span
+                              className={`inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full border border-borde ${
+                                inv.role === 'ADMIN' ? 'bg-amarillo text-tinta' : 'bg-cian text-azul'
+                              }`}
+                            >
+                              {NOMBRE_ROL[inv.role as RolPanel] || inv.role}
+                            </span>
                           </td>
                           <td className="py-4 px-4">
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amarillo text-tinta border border-borde">

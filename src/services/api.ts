@@ -1,4 +1,5 @@
 import { Product, Order, UserProfile, Tip } from '@/types';
+import type { RolPanel } from '@/lib/permisos';
 
 export const apiService = {
   async getProducts(category?: string, query?: string): Promise<Product[]> {
@@ -45,11 +46,25 @@ export const apiService = {
     return res.json();
   },
 
+  /** Productos retirados de la tienda. Fuera del panel responde 401 y da []. */
+  async getArchivedProducts(): Promise<Product[]> {
+    const res = await fetch('/api/v1/products?scope=archivados', { cache: 'no-store' });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return json.data || [];
+  },
+
+  /** Retira el producto de la tienda. No lo borra: conserva su historial. */
   async deleteProduct(id: string) {
     const res = await fetch(`/api/v1/products?id=${id}`, {
       method: 'DELETE',
     });
     return res.json();
+  },
+
+  /** Devuelve a la tienda un producto retirado. */
+  async restoreProduct(id: string) {
+    return this.updateProduct(id, { archived: false } as Partial<Product>);
   },
 
   async getPromotions(stage?: string, includeAll = false) {
@@ -311,11 +326,11 @@ export const apiService = {
     return res.json();
   },
 
-  async inviteAdminUser(fullName: string, email: string) {
+  async inviteAdminUser(fullName: string, email: string, role: RolPanel = 'ADMIN') {
     const res = await fetch('/api/v1/admin/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fullName, email }),
+      body: JSON.stringify({ fullName, email, role }),
     });
     return res.json();
   },

@@ -1,153 +1,97 @@
 import { prisma } from '@/lib/prisma';
-import { MOCK_PRODUCTS } from '@/data/mockData';
-import { Product, Promotion } from '@/types';
+import { Promotion } from '@/types';
 import { parseSizePrices } from '@/lib/pricing';
 
-// Global in-memory cache for dynamic updates when db is not seeded
-let memoryProducts: Product[] = [...MOCK_PRODUCTS];
+/*
+ * Este repositorio habla solo con PostgreSQL. No hay copia en memoria ni datos
+ * de ejemplo detrás.
+ *
+ * Antes sí los había: cada consulta iba envuelta en un try/catch que, ante
+ * cualquier error de Prisma, devolvía `MOCK_PRODUCTS` e `INITIAL_PROMOTIONS`.
+ * En la práctica eso convertía un fallo en una mentira silenciosa: cuando el
+ * cliente de Prisma quedó desfasado, la tienda pasó a servir tres productos
+ * inventados —con calificación 4.9 y "142 reseñas" escritas a mano— sin que
+ * nada fallara a la vista. Un catálogo falso que se puede añadir al carrito es
+ * peor que una página que dice que no pudo cargar, así que ahora el error sube.
+ */
 
-export const INITIAL_PROMOTIONS: Promotion[] = [
-  {
-    id: 'promo-1',
-    title: 'Trío de Pañitos Húmedos',
-    subtitle: 'Lleva 3 paquetes de Pañitos Húmedos Ensueño (x80 telas cada uno) y paga solo 2. ¡Un paquete va de regalo!',
-    tagline: 'Paga 2 y Lleva 3',
-    badge: 'OFERTA ESTRELLA ⭐',
-    badgeColor: 'secondary',
-    price: 37800,
-    originalPrice: 56700,
-    savingText: 'Ahorras $18.900 COP',
-    imageUrl: 'https://res.cloudinary.com/io8kzyuj/image/upload/ensueno/productos/panitos-humedos.webp',
-    videoUrl: '',
-    isActive: true,
-    productId: 'panitos-humedos',
-    sortOrder: 1,
-  },
-  {
-    id: 'promo-2',
-    title: '2 Colonias + Pañitos GRATIS',
-    subtitle: 'Compra 2 Colonias Ensueño de 250ml y te regalamos 1 paquete de Pañitos Húmedos Ensueño de extracto de algodón.',
-    tagline: 'Combo Dueto Fragancia',
-    badge: 'REGALO GRATIS 🎁',
-    badgeColor: 'primary',
-    price: 57000,
-    originalPrice: 75900,
-    savingText: 'Pañitos Húmedos valorados en $18.900 GRATIS',
-    imageUrl: 'https://res.cloudinary.com/io8kzyuj/image/upload/ensueno/productos/colonia.webp',
-    videoUrl: '',
-    isActive: true,
-    productId: 'colonia-ensueno',
-    sortOrder: 2,
-  },
-  {
-    id: 'promo-3',
-    title: 'Trío Esencial Ensueño',
-    subtitle: 'Lleva los 3 productos indispensables (Pañitos + Colonia + Mantequilla Corporal) en un empaque especial de regalo.',
-    tagline: 'Kit Cuidado Completo',
-    badge: '25% DESCUENTO ✨',
-    badgeColor: 'amber',
-    price: 59500,
-    originalPrice: 79400,
-    savingText: 'Ahorro del 25% vs compra individual',
-    imageUrl: 'https://res.cloudinary.com/io8kzyuj/image/upload/ensueno/productos/mantequilla-corporal.webp',
-    videoUrl: '',
-    isActive: true,
-    productId: 'mantequilla-corporal-ensueno',
-    sortOrder: 3,
-  },
-];
+/**
+ * Qué productos entran en una consulta. La tienda siempre pide `activos`; el
+ * panel es el único que puede pedir `archivados` para restaurarlos.
+ */
+export type ProductScope = 'activos' | 'archivados' | 'todos';
 
-let memoryPromotions: Promotion[] = [...INITIAL_PROMOTIONS];
+/**
+ * Calificación real de un producto a partir de sus reseñas.
+ *
+ * Sin reseñas devuelve 0, no 5.0. Un producto recién creado no vale cinco
+ * estrellas: `StarRating` lee `reviewsCount` y con 0 pinta las estrellas vacías
+ * y el texto "Sin reseñas", que es lo que corresponde hasta que alguien opine.
+ */
+function calificacionReal(reviews: { rating: number }[]) {
+  const reviewsCount = reviews.length;
+  const rating =
+    reviewsCount > 0
+      ? Number((reviews.reduce((sum, r) => sum + r.rating, 0) / reviewsCount).toFixed(1))
+      : 0;
+  return { rating, reviewsCount };
+}
 
 export class ProductRepository {
   /**
-   * Obtiene la lista de productos (de PostgreSQL o fallback a memoryProducts)
+   * Lista de productos. Si PostgreSQL falla, el error sube: la tienda muestra
+   * su página de error en vez de un catálogo inventado.
    */
-  async getProducts(category?: string, query?: string) {
-    try {
-      const where: any = {};
-      if (category && category !== 'todos') {
-        where.category = category;
-      }
-      if (query) {
-        where.OR = [
-          { name: { contains: query, mode: 'insensitive' } },
-          { description: { contains: query, mode: 'insensitive' } },
-          { subtitle: { contains: query, mode: 'insensitive' } },
-        ];
-      }
-
-      const products = await prisma.product.findMany({
-        where,
-        orderBy: { sortOrder: 'asc' },
-        include: {
-          reviews: {
-            select: { rating: true },
-          },
-        },
-      });
-
-      if (products.length > 0) {
-        return products.map((p) => {
-          const reviewsCount = p.reviews.length;
-          const avgRating =
-            reviewsCount > 0
-              ? Number((p.reviews.reduce((sum, r) => sum + r.rating, 0) / reviewsCount).toFixed(1))
-              : 5.0;
-          const { reviews, ...rest } = p;
-          return {
-            ...rest,
-            rating: avgRating,
-            reviewsCount,
-          };
-        });
-      }
-    } catch (err) {
-      console.warn('Prisma getProducts fallback warning:', err);
-    }
-
-    // Fallback a memoryProducts
-    let items = memoryProducts;
+  async getProducts(category?: string, query?: string, scope: ProductScope = 'activos') {
+    const where: any = {};
+    // Los archivados solo salen si se piden a propósito.
+    if (scope === 'activos') where.archivedAt = null;
+    if (scope === 'archivados') where.archivedAt = { not: null };
     if (category && category !== 'todos') {
-      items = items.filter((p) => p.category === category);
+      where.category = category;
     }
     if (query) {
-      const q = query.toLowerCase();
-      items = items.filter((p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q));
+      where.OR = [
+        { name: { contains: query, mode: 'insensitive' } },
+        { description: { contains: query, mode: 'insensitive' } },
+        { subtitle: { contains: query, mode: 'insensitive' } },
+      ];
     }
-    return items;
+
+    const products = await prisma.product.findMany({
+      where,
+      orderBy: { sortOrder: 'asc' },
+      include: {
+        reviews: {
+          select: { rating: true },
+        },
+      },
+    });
+
+    return products.map((p) => {
+      const { reviews, ...rest } = p;
+      return { ...rest, ...calificacionReal(reviews) };
+    });
   }
 
   /**
-   * Obtiene un producto por ID o Slug
+   * Obtiene un producto por ID o Slug. Un producto archivado se comporta como
+   * inexistente: la ficha responde 404 en vez de vender algo retirado.
    */
-  async getProductById(idOrSlug: string) {
+  async getProductById(idOrSlug: string, incluirArchivados = false) {
     // Handle Combos/Promotions seamlessly
     if (idOrSlug.startsWith('combo-') || idOrSlug.startsWith('promo-')) {
       const realPromoId = idOrSlug.replace('combo-', '');
-      let promo = null;
-      try {
-        promo = await prisma.promotion.findUnique({ where: { id: realPromoId } }) || await prisma.promotion.findUnique({ where: { id: idOrSlug } });
-      } catch(e) {}
-      
-      if (!promo) {
-        promo = memoryPromotions.find(p => p.id === realPromoId || p.id === idOrSlug) || null;
-      }
+      const promo =
+        (await prisma.promotion.findUnique({ where: { id: realPromoId } })) ||
+        (await prisma.promotion.findUnique({ where: { id: idOrSlug } }));
 
       if (promo) {
-        let promoReviews: { rating: number }[] = [];
-        try {
-          promoReviews = await prisma.review.findMany({
-            where: { productId: `combo-${promo.id}` },
-            select: { rating: true },
-          });
-        } catch (e) {}
-
-        const reviewsCount = promoReviews.length;
-        const avgRating =
-          reviewsCount > 0
-            ? Number((promoReviews.reduce((sum, r) => sum + r.rating, 0) / reviewsCount).toFixed(1))
-            : 5.0;
+        const promoReviews = await prisma.review.findMany({
+          where: { productId: `combo-${promo.id}` },
+          select: { rating: true },
+        });
+        const { rating: avgRating, reviewsCount } = calificacionReal(promoReviews);
 
         return {
           id: `combo-${promo.id}`,
@@ -172,29 +116,20 @@ export class ProductRepository {
       }
     }
 
-    try {
-      const product = await prisma.product.findFirst({
-        where: {
-          OR: [{ id: idOrSlug }, { slug: idOrSlug }],
-        },
-        include: {
-          reviews: { select: { rating: true } },
-        },
-      });
-      if (product) {
-        const reviewsCount = product.reviews.length;
-        const avgRating =
-          reviewsCount > 0
-            ? Number((product.reviews.reduce((sum, r) => sum + r.rating, 0) / reviewsCount).toFixed(1))
-            : 5.0;
-        const { reviews, ...rest } = product;
-        return { ...rest, rating: avgRating, reviewsCount };
-      }
-    } catch (err) {
-      console.warn('Prisma getProductById fallback warning:', err);
-    }
+    const product = await prisma.product.findFirst({
+      where: {
+        OR: [{ id: idOrSlug }, { slug: idOrSlug }],
+        ...(incluirArchivados ? {} : { archivedAt: null }),
+      },
+      include: {
+        reviews: { select: { rating: true } },
+      },
+    });
 
-    return memoryProducts.find((p) => p.id === idOrSlug || (p as any).slug === idOrSlug) || null;
+    if (!product) return null;
+
+    const { reviews, ...rest } = product;
+    return { ...rest, ...calificacionReal(reviews) };
   }
 
   /**
@@ -228,22 +163,7 @@ export class ProductRepository {
       slug,
     };
 
-    try {
-      const newProd = await prisma.product.create({
-        data: productData,
-      });
-      return newProd;
-    } catch (err) {
-      console.warn('Prisma createProduct fallback warning:', err);
-      const newMockItem: any = {
-        id: data.id || `prod-${Date.now()}`,
-        ...productData,
-        rating: 5.0,
-        reviewsCount: 1,
-      };
-      memoryProducts.unshift(newMockItem);
-      return newMockItem;
-    }
+    return prisma.product.create({ data: productData });
   }
 
   /**
@@ -264,6 +184,10 @@ export class ProductRepository {
     if (data.pediatricGuarantee !== undefined) updateData.pediatricGuarantee = data.pediatricGuarantee;
     if (data.inStock !== undefined) updateData.inStock = Boolean(data.inStock);
     if (data.isFeatured !== undefined) updateData.isFeatured = Boolean(data.isFeatured);
+    // `archived` es la palanca del panel; `archivedAt` es cómo se guarda.
+    if (data.archived !== undefined) {
+      updateData.archivedAt = data.archived ? new Date() : null;
+    }
 
     if (data.fragrances !== undefined) {
       updateData.fragrances = Array.isArray(data.fragrances) ? data.fragrances : typeof data.fragrances === 'string' ? data.fragrances.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
@@ -284,21 +208,7 @@ export class ProductRepository {
       updateData.ingredients = Array.isArray(data.ingredients) ? data.ingredients : typeof data.ingredients === 'string' ? data.ingredients.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
     }
 
-    try {
-      const updated = await prisma.product.update({
-        where: { id },
-        data: updateData,
-      });
-      return updated;
-    } catch (err) {
-      console.warn('Prisma updateProduct fallback warning:', err);
-      const index = memoryProducts.findIndex((p) => p.id === id);
-      if (index !== -1) {
-        memoryProducts[index] = { ...memoryProducts[index], ...updateData };
-        return memoryProducts[index];
-      }
-      throw new Error('Producto no encontrado');
-    }
+    return prisma.product.update({ where: { id }, data: updateData });
   }
 
   /**
@@ -309,46 +219,43 @@ export class ProductRepository {
   }
 
   /**
-   * Elimina un producto por ID
+   * Archiva un producto: lo saca de la tienda sin borrarlo.
+   *
+   * No es `delete` por una razón dura, no por gusto: `OrderItem.product` no
+   * declara `onDelete`, así que Postgres lo trata como RESTRICT y un producto
+   * con una sola venta no se puede borrar. Antes ese error caía en el catch,
+   * se filtraba `memoryProducts` (que no contiene lo de la base) y se devolvía
+   * `true`: el panel cantaba "eliminado" y el producto seguía en la tienda.
    */
-  async deleteProduct(id: string) {
-    try {
-      await prisma.product.delete({
-        where: { id },
-      });
-      return true;
-    } catch (err) {
-      console.warn('Prisma deleteProduct fallback warning:', err);
-      memoryProducts = memoryProducts.filter((p) => p.id !== id);
-      return true;
-    }
+  async archiveProduct(id: string) {
+    return prisma.product.update({
+      where: { id },
+      data: { archivedAt: new Date() },
+    });
+  }
+
+  /** Devuelve un producto archivado a la tienda. */
+  async restoreProduct(id: string) {
+    return prisma.product.update({
+      where: { id },
+      data: { archivedAt: null },
+    });
   }
 
   /**
    * Obtiene promociones activas
    */
   async getPromotions(targetStage?: string, includeAll: boolean = false) {
-    try {
-      const where: any = includeAll ? {} : { isActive: true };
-      if (targetStage) {
-        where.targetBabyStage = targetStage;
-      }
-      const promos = await prisma.promotion.findMany({
-        where,
-        include: { product: true },
-        orderBy: { sortOrder: 'asc' },
-      });
-
-      if (promos.length > 0) return promos;
-    } catch (err) {
-      console.warn('Prisma getPromotions fallback warning:', err);
+    const where: any = includeAll ? {} : { isActive: true };
+    if (targetStage) {
+      where.targetBabyStage = targetStage;
     }
 
-    let items = memoryPromotions;
-    if (!includeAll) {
-      items = items.filter((p) => p.isActive);
-    }
-    return items;
+    return prisma.promotion.findMany({
+      where,
+      include: { product: true },
+      orderBy: { sortOrder: 'asc' },
+    });
   }
 
   /**
@@ -374,19 +281,7 @@ export class ProductRepository {
       sortOrder: data.sortOrder ? Number(data.sortOrder) : 0,
     };
 
-    try {
-      return await prisma.promotion.create({
-        data: promoData,
-      });
-    } catch (err) {
-      console.warn('Prisma createPromotion fallback warning:', err);
-      const newPromo: Promotion = {
-        id: data.id || `promo-${Date.now()}`,
-        ...promoData,
-      };
-      memoryPromotions.unshift(newPromo);
-      return newPromo;
-    }
+    return prisma.promotion.create({ data: promoData });
   }
 
   /**
@@ -411,36 +306,15 @@ export class ProductRepository {
     if (data.isActive !== undefined) updateData.isActive = Boolean(data.isActive);
     if (data.sortOrder !== undefined) updateData.sortOrder = Number(data.sortOrder);
 
-    try {
-      return await prisma.promotion.update({
-        where: { id },
-        data: updateData,
-      });
-    } catch (err) {
-      console.warn('Prisma updatePromotion fallback warning:', err);
-      const idx = memoryPromotions.findIndex((p) => p.id === id);
-      if (idx !== -1) {
-        memoryPromotions[idx] = { ...memoryPromotions[idx], ...updateData };
-        return memoryPromotions[idx];
-      }
-      throw new Error('Promoción no encontrada');
-    }
+    return prisma.promotion.update({ where: { id }, data: updateData });
   }
 
   /**
    * Elimina una promoción por ID
    */
   async deletePromotion(id: string) {
-    try {
-      await prisma.promotion.delete({
-        where: { id },
-      });
-      return true;
-    } catch (err) {
-      console.warn('Prisma deletePromotion fallback warning:', err);
-      memoryPromotions = memoryPromotions.filter((p) => p.id !== id);
-      return true;
-    }
+    await prisma.promotion.delete({ where: { id } });
+    return true;
   }
 }
 

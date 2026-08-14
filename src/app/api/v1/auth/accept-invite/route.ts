@@ -2,10 +2,11 @@ import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 import { getJwtSecret } from '@/lib/jwt';
 import { adminRepository } from '@/infrastructure/repositories/AdminRepository';
+import { NOMBRE_ROL, type RolPanel } from '@/lib/permisos';
 
 /*
  * Vive bajo /auth y no bajo /admin a propósito: quien activa su invitación
- * todavía no tiene sesión, así que el middleware de /api/v1/admin la bloquearía.
+ * todavía no tiene sesión, así que el proxy de /api/v1/admin la bloquearía.
  * La autorización aquí la da el token de la invitación, nada más.
  */
 
@@ -24,7 +25,12 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       success: true,
-      data: { email: invitation.email, fullName: invitation.fullName, expiresAt: invitation.expiresAt },
+      data: {
+        email: invitation.email,
+        fullName: invitation.fullName,
+        role: invitation.role,
+        expiresAt: invitation.expiresAt,
+      },
     });
   } catch (err) {
     console.error('Error en GET /api/v1/auth/accept-invite:', err);
@@ -55,7 +61,7 @@ export async function POST(request: Request) {
     // al panel, sin volver a escribirla en la pantalla de login.
     const response = NextResponse.json({
       success: true,
-      message: '¡Listo! Tu cuenta de administración quedó activa.',
+      message: `¡Listo! Tu cuenta de ${NOMBRE_ROL[user.role as RolPanel]} quedó activa.`,
       user: { id: user.id, email: user.email, role: user.role },
     });
 

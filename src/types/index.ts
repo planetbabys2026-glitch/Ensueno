@@ -1,3 +1,5 @@
+import type { EstadoPedido } from '@/lib/permisos';
+
 export interface Product {
   id: string;
   name: string;
@@ -21,6 +23,10 @@ export interface Product {
   additionalImages?: string[];
   inStock: boolean;
   isFeatured?: boolean;
+  /** Con fecha, el producto está retirado: no sale en la tienda ni en la ficha.
+      `archived` es la palanca que manda el panel para ponerla o quitarla. */
+  archivedAt?: string | Date | null;
+  archived?: boolean;
 }
 
 export interface CartItem {
@@ -39,7 +45,10 @@ export interface Order {
   id: string;
   orderNumber?: string;
   date?: string;
-  status: 'confirmado' | 'preparando' | 'en_camino' | 'entregado';
+  /** Los ocho valores que el panel escribe de verdad. Decía 'preparando' y
+      'entregado', que no existen: quien filtrara por ellos no encontraría nunca
+      un pedido. La lista vive en `permisos.ts`, que es la que valida el PUT. */
+  status: EstadoPedido;
   statusStep: number; // 1 to 4
   items: CartItem[];
   subtotal: number;
