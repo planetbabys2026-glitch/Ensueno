@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { jwtVerify } from 'jose';
 import { getJwtSecretEncoded } from '@/lib/jwt';
+import { ES_ROL_DE_PANEL, moduloDeRuta, puedeVerModulo } from '@/lib/permisos';
 
 /** Métodos que no modifican nada: la tienda los necesita abiertos. */
 const SOLO_LECTURA = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -29,7 +30,7 @@ const ESCRITURA_SOLO_ADMIN = [
 
 const enRuta = (pathname: string, base: string) => pathname === base || pathname.startsWith(`${base}/`);
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const esApiDeAdmin = enRuta(pathname, '/api/v1/admin');
@@ -48,9 +49,21 @@ export async function middleware(request: NextRequest) {
 
   try {
     const { payload } = await jwtVerify(token, getJwtSecretEncoded());
-    if (payload.role !== 'ADMIN') {
+
+    if (!ES_ROL_DE_PANEL(payload.role)) {
       return NextResponse.json(
-        { success: false, error: 'Acceso denegado: Se requieren permisos de Administrador' },
+        { success: false, error: 'Acceso denegado: Se requieren permisos del panel' },
+        { status: 403 }
+      );
+    }
+
+    // Cada ruta pertenece a un módulo; si el rol no lo tiene, no pasa de aquí.
+    // `permisos.ts` es la misma tabla que usan las rutas, así que el borde y el
+    // servidor no pueden opinar distinto.
+    const vigilancia = moduloDeRuta(pathname);
+    if (vigilancia?.modulo && !puedeVerModulo(payload.role, vigilancia.modulo)) {
+      return NextResponse.json(
+        { success: false, error: 'Tu rol no tiene acceso a esta sección' },
         { status: 403 }
       );
     }

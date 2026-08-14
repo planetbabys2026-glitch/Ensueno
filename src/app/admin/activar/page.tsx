@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { apiService } from '@/services/api';
 import { useToast } from '@/context/ToastContext';
 import { ShieldCheck, KeyRound, ChevronLeft } from 'lucide-react';
+import { NOMBRE_ROL, type RolPanel } from '@/lib/permisos';
 
 /*
  * Activación de una invitación al panel.
@@ -24,7 +25,7 @@ function ActivarCuentaForm() {
   const token = searchParams.get('token') || '';
 
   const [estado, setEstado] = useState<Estado>('validando');
-  const [invitacion, setInvitacion] = useState<{ email: string; fullName: string } | null>(null);
+  const [invitacion, setInvitacion] = useState<{ email: string; fullName: string; role?: RolPanel } | null>(null);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +143,11 @@ function ActivarCuentaForm() {
                 <p className="ens-eyebrow text-tinta-suave">Tu cuenta</p>
                 <p className="text-sm font-bold text-tinta mt-1">{invitacion?.fullName}</p>
                 <p className="text-xs text-tinta-suave">{invitacion?.email}</p>
+                {invitacion?.role && (
+                  <p className="mt-2 inline-flex items-center text-[11px] font-black uppercase tracking-wider bg-white text-azul border border-borde rounded-full px-2.5 py-0.5">
+                    {NOMBRE_ROL[invitacion.role]}
+                  </p>
+                )}
               </div>
 
               <form onSubmit={handleActivar} className="mt-5 space-y-4">

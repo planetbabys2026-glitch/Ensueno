@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { heroRepository } from '@/infrastructure/repositories/HeroRepository';
 import { requireAdmin, noAutorizado } from '@/lib/adminAuth';
+import { revalidateStorefront } from '@/lib/revalidateStorefront';
 
 /*
  * El GET es público: la portada lo consume. Todo lo que escribe exige
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
     }
 
     const created = await heroRepository.createSlide(body);
+    revalidateStorefront();
     return NextResponse.json({ success: true, message: 'Diapositiva creada', data: created });
   } catch (err) {
     console.error('Error en POST /api/v1/hero:', err);
@@ -56,6 +58,7 @@ export async function PUT(request: Request) {
     // Los ajustes globales viajan por aquí para no abrir otra ruta.
     if (action === 'config') {
       const config = await heroRepository.updateConfig(Number(intervalMs));
+      revalidateStorefront();
       return NextResponse.json({ success: true, message: 'Ajustes del hero guardados', data: config });
     }
 
@@ -71,6 +74,7 @@ export async function PUT(request: Request) {
       if (!movido) {
         return NextResponse.json({ success: false, error: 'No se pudo reordenar.' }, { status: 400 });
       }
+      revalidateStorefront();
       return NextResponse.json({ success: true, message: 'Orden actualizado' });
     }
 
@@ -83,6 +87,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ success: false, error: 'Diapositiva no encontrada' }, { status: 404 });
     }
 
+    revalidateStorefront();
     return NextResponse.json({ success: true, message: 'Diapositiva actualizada', data: updated });
   } catch (err) {
     console.error('Error en PUT /api/v1/hero:', err);
@@ -106,6 +111,7 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ success: false, error: 'Diapositiva no encontrada' }, { status: 404 });
     }
 
+    revalidateStorefront();
     return NextResponse.json({ success: true, message: 'Diapositiva eliminada' });
   } catch (err) {
     console.error('Error en DELETE /api/v1/hero:', err);

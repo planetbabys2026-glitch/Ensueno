@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, noAutorizado } from '@/lib/adminAuth';
+import { requireModulo, noAutorizado } from '@/lib/adminAuth';
 import { followUpRepository } from '@/infrastructure/repositories/FollowUpRepository';
 
 export async function GET() {
   try {
-    if (!(await requireAdmin())) return noAutorizado();
+    if (!(await requireModulo('followup'))) return noAutorizado();
 
     const [bandeja, config] = await Promise.all([
       followUpRepository.getBandeja(),
@@ -20,7 +20,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
-    const admin = await requireAdmin();
+    const admin = await requireModulo('followup');
     if (!admin) return noAutorizado();
 
     const body = await request.json();

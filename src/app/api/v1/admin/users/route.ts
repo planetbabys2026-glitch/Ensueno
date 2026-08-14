@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin, noAutorizado } from '@/lib/adminAuth';
+import { ES_ROL_DE_PANEL, NOMBRE_ROL, type RolPanel } from '@/lib/permisos';
 import { adminRepository } from '@/infrastructure/repositories/AdminRepository';
 import { userRepository } from '@/infrastructure/repositories/UserRepository';
 import { resendService } from '@/infrastructure/services/ResendService';
@@ -58,6 +59,16 @@ export async function POST(request: Request) {
     const body = await request.json();
     const fullName = String(body.fullName || '').trim();
     const email = String(body.email || '').toLowerCase().trim();
+    // Solo `ADMIN` o `ASISTENTE`; cualquier otra cosa se rechaza en vez de
+    // caer a un valor por defecto que nadie pidió.
+    const role = body.role ?? 'ADMIN';
+
+    if (!ES_ROL_DE_PANEL(role)) {
+      return NextResponse.json(
+        { success: false, error: 'El rol debe ser Administradora o Asistente.' },
+        { status: 400 }
+      );
+    }
 
     if (!fullName || !email) {
       return NextResponse.json({ success: false, error: 'El nombre y el correo son obligatorios.' }, { status: 400 });
@@ -67,11 +78,11 @@ export async function POST(request: Request) {
     }
 
     const existing = await userRepository.findByEmail(email);
-    if (existing?.role === 'ADMIN') {
+    if (existing && ES_ROL_DE_PANEL(existing.role)) {
       return NextResponse.json({ success: false, error: 'Esa persona ya tiene acceso al panel.' }, { status: 400 });
     }
 
-    const { rawToken } = await adminRepository.createInvitation(email, fullName, admin.id);
+    const { rawToken } = await adminRepository.createInvitation(email, fullName, admin.id, role as RolPanel);
     const delivery = await deliverInvite(email, fullName, admin.email, rawToken);
 
     if (!delivery.sent) {
@@ -83,7 +94,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Invitación enviada a ${email}`,
+      message: `Invitación enviada a ${email} como ${NOMBRE_ROL[role as RolPanel]}`,
       data: { activationUrl: delivery.activationUrl },
     });
   } catch (err) {
@@ -145,16 +156,18 @@ export async function DELETE(request: Request) {
     if (userId === admin.id) {
       return NextResponse.json({ success: false, error: 'No puedes quitarte a ti misma el acceso.' }, { status: 400 });
     }
-    if ((await adminRepository.countAdmins()) <= 1) {
+    const target = (await adminRepository.listAdmins()).find((a) => a.id === userId);
+    if (!target) {
+      return NextResponse.json({ success: false, error: 'Esa cuenta ya no tiene acceso al panel.' }, { status: 404 });
+    }
+
+    // Quitarle el acceso a una asistente nunca deja el panel huérfano; el
+    // conteo solo importa cuando la que sale es administradora.
+    if (target.role === 'ADMIN' && (await adminRepository.countAdmins()) <= 1) {
       return NextResponse.json({ success: false, error: 'Debe quedar al menos un administrador.' }, { status: 400 });
     }
 
-    const target = (await adminRepository.listAdmins()).find((a) => a.id === userId);
-    if (!target) {
-      return NextResponse.json({ success: false, error: 'Esa cuenta ya no es administradora.' }, { status: 404 });
-    }
-
-    const revoked = await adminRepository.revokeAdmin(userId);
+    const revoked = await adminRepository.revokeAccesoAlPanel(userId);
     return NextResponse.json({ success: true, message: `${revoked.email} ya no tiene acceso al panel` });
   } catch (err) {
     console.error('Error en DELETE /api/v1/admin/users:', err);

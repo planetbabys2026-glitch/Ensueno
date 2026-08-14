@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, noAutorizado } from '@/lib/adminAuth';
+import { requirePanel, noAutorizado } from '@/lib/adminAuth';
 import { getCloudinaryConfig, signUploadParams } from '@/lib/cloudinary';
 
 /*
@@ -23,7 +23,7 @@ const CARPETAS: Record<string, string> = {
 
 export async function POST(request: Request) {
   try {
-    if (!(await requireAdmin())) return noAutorizado();
+    if (!(await requirePanel())) return noAutorizado();
 
     const config = getCloudinaryConfig();
     if (!config) {

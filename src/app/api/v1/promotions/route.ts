@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { productRepository } from '@/infrastructure/repositories/ProductRepository';
 import { requireAdmin, noAutorizado } from '@/lib/adminAuth';
+import { revalidateStorefront } from '@/lib/revalidateStorefront';
 
 /*
  * El GET es público para la portada. Todo lo que escribe exige administrador:
- * esta ruta queda fuera del matcher del middleware (/api/v1/admin/*), así que
+ * esta ruta queda fuera del matcher del proxy (/api/v1/admin/*), así que
  * la única defensa es la de aquí adentro.
  */
 
@@ -34,6 +35,7 @@ export async function POST(req: Request) {
     }
 
     const promotion = await productRepository.createPromotion(body);
+    revalidateStorefront();
     return NextResponse.json({ success: true, message: 'Promoción/Combo creado con éxito', data: promotion });
   } catch (err: any) {
     console.error('Error en POST /api/v1/promotions:', err);
@@ -53,6 +55,7 @@ export async function PUT(req: Request) {
     }
 
     const updated = await productRepository.updatePromotion(id, data);
+    revalidateStorefront();
     return NextResponse.json({ success: true, message: 'Promoción/Combo actualizada con éxito', data: updated });
   } catch (err: any) {
     console.error('Error en PUT /api/v1/promotions:', err);
@@ -70,6 +73,7 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ success: false, error: 'ID de promoción requerido' }, { status: 400 });
     }
     await productRepository.deletePromotion(id);
+    revalidateStorefront();
     return NextResponse.json({ success: true, message: 'Promoción/Combo eliminada' });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message || 'Error al eliminar promoción' }, { status: 500 });

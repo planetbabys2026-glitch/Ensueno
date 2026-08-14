@@ -10,6 +10,10 @@ datasource db {
 
 enum Role {
   ADMIN
+  /** Atiende clientas: pedidos, seguimiento y tips. Nada de catálogo, precios
+      de envío, portada, métricas, clientas ni equipo. Ver `src/lib/permisos.ts`,
+      que es donde se decide de verdad. */
+  ASISTENTE
   CUSTOMER
 }
 
@@ -91,7 +95,10 @@ model Product {
   category         String       // sueno, piel, higiene, kits
   price            Float
   originalPrice    Float?
-  rating           Float        @default(5.0)
+  /** Promedio real de las reseñas. Arranca en 0, no en 5: un producto sin
+      reseñas no vale cinco estrellas. `StarRating` usa `reviewsCount` para
+      decidir si pinta estrellas o el texto "Sin reseñas". */
+  rating           Float        @default(0)
   reviewsCount     Int          @default(0)
   image            String       // Main Image URL (editable URL)
   additionalImages String[]     @default([])
@@ -108,6 +115,11 @@ model Product {
   pediatricGuarantee String?    @default("Aprobado por la Asociación Colombiana de Pediatría")
   inStock          Boolean      @default(true)
   isFeatured       Boolean      @default(true)
+  /** Fecha de archivado. Con valor, el producto desaparece de la tienda y del
+      catálogo del panel, pero sigue existiendo: `OrderItem.product` no lleva
+      `onDelete`, así que es Restrict y borrar un producto ya vendido revienta
+      contra la llave foránea. Archivar oculta sin romper el historial. */
+  archivedAt       DateTime?
   sortOrder        Int          @default(0)
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
@@ -269,6 +281,9 @@ model AdminInvitation {
   id          String    @id @default(cuid())
   email       String
   fullName    String
+  /** Con qué rol entra quien acepte. Viaja en la invitación y no en el momento
+      de aceptar: así el enlace no se puede canjear por un rol más alto. */
+  role        Role      @default(ADMIN)
   tokenHash   String    @unique
   invitedById String
   invitedBy   User      @relation("AdminInvitesSent", fields: [invitedById], references: [id])
