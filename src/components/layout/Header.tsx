@@ -7,33 +7,18 @@ import { usePathname } from 'next/navigation';
 import { ShoppingBag, User, Menu, X, LogOut, ChevronDown } from 'lucide-react';
 import { useCart } from '@/context/CartContext';
 import { useUser } from '@/context/UserContext';
+import { Product } from '@/types';
+import { apiService } from '@/services/api';
 
 const LOGO_URL = 'https://res.cloudinary.com/io8kzyuj/image/upload/ensueno/marca/logo.webp';
-
-/** Los tres SKU reales, para el mega-menú. */
-const PRODUCT_LINKS = [
-  {
-    href: '/productos/panitos-humedos',
-    label: 'Pañitos Húmedos',
-    blurb: 'Algodón orgánico y manzanilla',
-  },
-  {
-    href: '/productos/colonia-ensueno',
-    label: 'Colonia',
-    blurb: 'Sin alcohol, flor de azahar',
-  },
-  {
-    href: '/productos/mantequilla-corporal-ensueno',
-    label: 'Mantequilla Corporal',
-    blurb: 'Avena coloidal y karité',
-  },
-];
 
 export default function Header() {
   const pathname = usePathname();
   const { cartCount } = useCart();
   const { currentUser, openAuthModal, logout } = useUser();
 
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [megaOpen, setMegaOpen] = useState(false);
@@ -69,6 +54,29 @@ export default function Header() {
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
+
+  // Cargar productos reales de la tienda para el menú
+  useEffect(() => {
+    let isMounted = true;
+    async function fetchProducts() {
+      try {
+        const data = await apiService.getProducts();
+        if (isMounted && Array.isArray(data)) {
+          setProducts(data);
+        }
+      } catch (err) {
+        console.error('Error al cargar productos para el menú:', err);
+      } finally {
+        if (isMounted) {
+          setLoadingProducts(false);
+        }
+      }
+    }
+    fetchProducts();
+    return () => {
+      isMounted = false;
     };
   }, []);
 
@@ -245,49 +253,165 @@ export default function Header() {
           className="hidden md:block absolute left-0 right-0 top-full bg-white border-y border-borde shadow-lg animate-fade-in"
         >
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <p className="ens-eyebrow text-tinta-suave mb-5">Catálogo Ensueño</p>
-            <ul className="grid grid-cols-3 gap-4">
-              {PRODUCT_LINKS.map((p) => (
-                <li key={p.href}>
-                  <Link
-                    href={p.href}
-                    className="block p-4 rounded-2xl border border-borde hover:border-azul hover:bg-cian transition-colors ens-focus"
-                  >
-                    <span className="block font-display text-lg text-tinta">{p.label}</span>
-                    <span className="block mt-1 text-sm text-tinta-suave">{p.blurb}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <div className="flex items-center justify-between mb-5">
+              <p className="ens-eyebrow text-tinta-suave">Catálogo Ensueño</p>
+              <Link
+                href="/#productos"
+                onClick={() => setMegaOpen(false)}
+                className="text-xs font-bold text-azul hover:underline"
+              >
+                Ver todos los productos →
+              </Link>
+            </div>
+
+            {loadingProducts && products.length === 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3].map((n) => (
+                  <div
+                    key={n}
+                    className="p-4 rounded-2xl border border-borde bg-cian/30 animate-pulse h-20"
+                  />
+                ))}
+              </div>
+            ) : products.length === 0 ? (
+              <div className="py-6 text-center text-tinta-suave text-sm">
+                No hay productos disponibles por el momento.
+              </div>
+            ) : (
+              <ul
+                className={`grid gap-4 ${
+                  products.length === 1
+                    ? 'grid-cols-1 max-w-sm'
+                    : products.length === 2
+                    ? 'grid-cols-1 sm:grid-cols-2 max-w-2xl'
+                    : products.length === 3
+                    ? 'grid-cols-1 sm:grid-cols-3'
+                    : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+                }`}
+              >
+                {products.map((p) => {
+                  const href = `/productos/${p.slug || p.id}`;
+                  return (
+                    <li key={p.id || p.slug}>
+                      <Link
+                        href={href}
+                        onClick={() => setMegaOpen(false)}
+                        className="group flex items-center gap-3.5 p-4 rounded-2xl border border-borde hover:border-azul hover:bg-cian transition-colors ens-focus"
+                      >
+                        {p.image && (
+                          <div className="relative w-14 h-14 rounded-xl bg-white border border-borde overflow-hidden shrink-0">
+                            <Image
+                              src={p.image}
+                              alt={p.name}
+                              fill
+                              sizes="56px"
+                              className="object-contain p-1 group-hover:scale-105 transition-transform"
+                            />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="block font-display text-base text-tinta truncate">
+                              {p.name}
+                            </span>
+                            {p.badge && (
+                              <span className="shrink-0 text-[10px] font-bold text-azul bg-celeste px-2 py-0.5 rounded-full">
+                                {p.badge}
+                              </span>
+                            )}
+                          </div>
+                          {p.subtitle && (
+                            <span className="block mt-1 text-xs text-tinta-suave line-clamp-1">
+                              {p.subtitle}
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
         </div>
       )}
 
       {/* Navegación móvil */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-white border-t border-borde px-4 pt-3 pb-6 space-y-1">
-          {[{ href: '/', label: 'Inicio' }, ...PRODUCT_LINKS.map((p) => ({ href: p.href, label: p.label })), ...navLinks.slice(1)].map(
-            (link) => (
+        <div className="md:hidden bg-white border-t border-borde px-4 pt-3 pb-6 space-y-1 max-h-[calc(100vh-5rem)] overflow-y-auto">
+          <Link
+            href="/"
+            onClick={() => setMobileMenuOpen(false)}
+            className={`block px-4 py-3 rounded-xl text-base font-bold transition-colors ${
+              pathname === '/' ? 'bg-celeste text-tinta' : 'text-tinta-suave hover:bg-cian'
+            }`}
+          >
+            Inicio
+          </Link>
+
+          {/* Sección de productos en móvil */}
+          <div className="py-1">
+            <p className="px-4 py-1 text-xs font-bold uppercase tracking-wider text-azul">
+              Productos
+            </p>
+            {loadingProducts && products.length === 0 ? (
+              <div className="px-4 py-2 text-xs text-tinta-suave animate-pulse">
+                Cargando productos…
+              </div>
+            ) : products.length === 0 ? (
               <Link
-                key={link.href}
-                href={link.href}
-                onClick={(e) => {
-                  if (link.href === '/perfil' && !currentUser) {
-                    e.preventDefault();
-                    setMobileMenuOpen(false);
-                    openAuthModal('login');
-                  }
-                }}
-                className={`block px-4 py-3 rounded-xl text-base font-bold transition-colors ${
-                  pathname === link.href
-                    ? 'bg-celeste text-tinta'
-                    : 'text-tinta-suave hover:bg-cian'
-                }`}
+                href="/#productos"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block px-4 py-2 pl-6 rounded-xl text-sm font-semibold text-tinta-suave hover:bg-cian"
               >
-                {link.label}
+                Ver catálogo
               </Link>
-            )
-          )}
+            ) : (
+              products.map((p) => {
+                const href = `/productos/${p.slug || p.id}`;
+                return (
+                  <Link
+                    key={p.id || p.slug}
+                    href={href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`block px-4 py-2.5 pl-6 rounded-xl text-sm font-semibold transition-colors ${
+                      pathname === href
+                        ? 'bg-celeste text-tinta font-bold'
+                        : 'text-tinta-suave hover:bg-cian'
+                    }`}
+                  >
+                    {p.name}
+                  </Link>
+                );
+              })
+            )}
+          </div>
+
+          <Link
+            href="/tips"
+            onClick={() => setMobileMenuOpen(false)}
+            className={`block px-4 py-3 rounded-xl text-base font-bold transition-colors ${
+              pathname === '/tips' ? 'bg-celeste text-tinta' : 'text-tinta-suave hover:bg-cian'
+            }`}
+          >
+            Tips de Sueño
+          </Link>
+
+          <Link
+            href="/perfil"
+            onClick={(e) => {
+              setMobileMenuOpen(false);
+              if (!currentUser) {
+                e.preventDefault();
+                openAuthModal('login');
+              }
+            }}
+            className={`block px-4 py-3 rounded-xl text-base font-bold transition-colors ${
+              pathname === '/perfil' ? 'bg-celeste text-tinta' : 'text-tinta-suave hover:bg-cian'
+            }`}
+          >
+            Mi Perfil
+          </Link>
 
           {currentUser ? (
             <button

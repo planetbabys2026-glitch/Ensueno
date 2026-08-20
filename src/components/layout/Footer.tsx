@@ -1,11 +1,13 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Heart, ShieldCheck, Moon, Award } from 'lucide-react';
 
 import { useUser } from '@/context/UserContext';
+import { Product } from '@/types';
+import { apiService } from '@/services/api';
 
 const LOGO_URL = 'https://res.cloudinary.com/io8kzyuj/image/upload/ensueno/marca/logo.webp';
 
@@ -34,6 +36,22 @@ const TRUST = [
 
 export default function Footer() {
   const { currentUser, openAuthModal } = useUser();
+  const [products, setProducts] = useState<Product[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    apiService
+      .getProducts()
+      .then((data) => {
+        if (isMounted && Array.isArray(data)) {
+          setProducts(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <footer className="mt-20">
@@ -68,8 +86,8 @@ export default function Footer() {
                 />
               </Link>
               <p className="text-sm text-white/80 leading-relaxed">
-                El cuidado más tierno para tu bebé. Tres esenciales con fórmulas pediátricas
-                hipoalergénicas, hechos en Colombia.
+                El cuidado más tierno para tu bebé. Fórmulas pediátricas
+                hipoalergénicas, hechos en Colombia con amor.
               </p>
             </div>
 
@@ -78,24 +96,24 @@ export default function Footer() {
                 Productos
               </h2>
               <ul className="space-y-2.5 text-sm text-white/80">
-                <li>
-                  <Link href="/productos/panitos-humedos" className="hover:text-celeste transition-colors">
-                    Pañitos húmedos
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/productos/colonia-ensueno" className="hover:text-celeste transition-colors">
-                    Colonia
-                  </Link>
-                </li>
-                <li>
-                  <Link
-                    href="/productos/mantequilla-corporal-ensueno"
-                    className="hover:text-celeste transition-colors"
-                  >
-                    Mantequilla corporal
-                  </Link>
-                </li>
+                {products.length > 0 ? (
+                  products.map((p) => (
+                    <li key={p.id || p.slug}>
+                      <Link
+                        href={`/productos/${p.slug || p.id}`}
+                        className="hover:text-celeste transition-colors block truncate"
+                      >
+                        {p.name}
+                      </Link>
+                    </li>
+                  ))
+                ) : (
+                  <li>
+                    <Link href="/#productos" className="hover:text-celeste transition-colors">
+                      Ver catálogo completo
+                    </Link>
+                  </li>
+                )}
               </ul>
             </nav>
 

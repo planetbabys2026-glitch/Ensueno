@@ -38,7 +38,7 @@ export default function ProductCard({
     <article className="ens-card group h-full">
       {/* Pozo de imagen: el empaque sobre color plano, no recortado. */}
       <div className="ens-card__media">
-        <Link href={`/productos/${product.id}`} className="block absolute inset-0 ens-focus">
+        <Link href={`/productos/${product.slug || product.id}`} className="block absolute inset-0 ens-focus">
           <Image
             src={product.image}
             alt={product.name}
@@ -59,7 +59,7 @@ export default function ProductCard({
         <p className="ens-eyebrow text-tinta-suave">{CATEGORY_LABEL[product.category]}</p>
 
         <h3 className="mt-1.5 font-display text-xl leading-snug text-tinta">
-          <Link href={`/productos/${product.id}`} className="hover:text-azul transition-colors">
+          <Link href={`/productos/${product.slug || product.id}`} className="hover:text-azul transition-colors">
             {product.name}
           </Link>
         </h3>
