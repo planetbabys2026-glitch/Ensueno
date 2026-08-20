@@ -26,7 +26,7 @@ const nunito = Nunito({
 });
 
 export const metadata: Metadata = {
-  title: 'Ensueño | Cuidado Natural y Sueño Profundo para tu Bebé',
+  title: 'Ensueño | Cuidado natural que sí cuida la piel de tu bebé',
   description:
     'E-Commerce de cosmética hipoalergénica infantil con fórmulas de lavanda, manzanilla y avena para el descanso perfecto de tu bebé.',
 };
