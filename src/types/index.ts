@@ -2,6 +2,7 @@ import type { EstadoPedido } from '@/lib/permisos';
 
 export interface Product {
   id: string;
+  slug?: string;
   name: string;
   subtitle: string;
   category: 'sueno' | 'piel' | 'higiene' | 'kits';

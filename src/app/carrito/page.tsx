@@ -397,7 +397,7 @@ function CartContent() {
                   className="bg-white border border-borde rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-4"
                 >
                   <Link
-                    href={`/productos/${item.product.id}`}
+                    href={`/productos/${item.product.slug || item.product.id}`}
                     className="relative w-20 h-20 shrink-0 rounded-2xl overflow-hidden bg-celeste ens-focus"
                   >
                     <Image
@@ -412,7 +412,7 @@ function CartContent() {
                   <div className="flex-1 min-w-0">
                     <h2 className="font-display text-lg leading-snug text-tinta">
                       <Link
-                        href={`/productos/${item.product.id}`}
+                        href={`/productos/${item.product.slug || item.product.id}`}
                         className="hover:text-azul transition-colors ens-focus"
                       >
                         {item.product.name}
